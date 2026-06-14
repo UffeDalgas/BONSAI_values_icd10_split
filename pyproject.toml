@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "corebehrt"
+version = "0.1.0"
+description = "A framework for processing and analyzing Electronic Health Records (EHR) data using BERT-based models."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Kiril Klein", email = "kikl@di.ku.dk" },
+    { name = "Mikkel Odgaard" },
+    { name = "Stephan Sloth Lorenzen" },
+    { name = "Maria Elkjær Montgomery" },
+]
+keywords = ["EHR", "BERT", "healthcare", "machine learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps."
+]
+dependencies = [
+    "numpy>=1.24.0,<2.0",  # Avoid numpy 2.x compatibility issues
+    "pandas>=2.0.0",
+    "pyarrow>=15.0.0",
+    "python-dateutil>=2.8.0",
+    "PyYAML>=6.0",
+    "scikit-learn>=1.2.0",
+    "torch>=2.0.0",  # Compatible with 2.0 through 2.5, Intel Mac friendly
+    "tqdm>=4.65.0",
+    "transformers>=4.30.0",  # Reduced from 4.48 to support older torch
+    "xgboost>=2.0.0"
+]
+
+[tool.setuptools.packages.find]
+include = ["corebehrt", "corebehrt.*"]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "docstr-coverage",
+    "coverage",
+]
+
+[project.urls]
+Homepage = "https://github.com/FGA-DIKU/EHR"
+Source = "https://github.com/FGA-DIKU/EHR"
+Tracker = "https://github.com/FGA-DIKU/EHR/issues"
+

@@ -1,0 +1,281 @@
+# MEDS-Based Ablation Study: Diabetes Mortality with Biological Proxies
+#
+# This configuration demonstrates disease-specific filtering using ehr2meds MEDS format.
+#
+# Strategy:
+#   1. Load MEDS data from parquet files
+#   2. Filter patients by ICD code pattern (D74* = diabetes in Danish ICD-10)
+#   3. Exclude diabetes from pretraining cohort (population control)
+#   4. Create disease-specific finetune/eval splits
+#   5. Validate whether biological proxies improve mortality prediction
+
+# ============================================================================
+# MEDS DATA SOURCE
+# ============================================================================
+meds:
+  # Path to ehr2meds output (parquet files with concept_id column)
+  data_path: "./outputs/tokenized/"
+
+  # Disease code pattern matching ICD-10 codes from ehr2meds
+  # Examples:
+  #   "D74*"  = ICD-10 E10-E14 (Diabetes) in Danish registers
+  #   "I50*"  = Heart failure
+  #   "J44*"  = COPD
+  #   "K74*"  = Liver disease
+  #   "I10*"  = Hypertension
+  disease_code_pattern: "D74*"
+
+  # Which column contains the medical concept codes
+  concept_column: "concept_id"
+
+  # Timestamp column for temporal filtering (optional)
+  timestamp_column: "event_timestamp"
+
+# ============================================================================
+# COHORT STRATIFICATION
+# ============================================================================
+ablation_study:
+  # Disease name for reference
+  disease_name: "diabetes"
+
+  # Biological proxies to validate
+  biological_features:
+    - "grim_age2"           # GrimAge2 clock (accelerated aging)
+    - "systems_age"         # SystemsAge clock (system-level aging)
+    - "maple"               # MAPLE methylation patterns (32-dim)
+    - "methylgpt"           # MethylGPT embeddings (64-dim)
+
+  # Split sizes for ablation
+  # Pretrain uses: all MEDS data EXCEPT diabetes patients
+  # Finetune uses: diabetes patients WITH biological proxy measurements
+  # Eval uses: diabetes patients WITHOUT biological proxies (held-out test)
+  cohort_split:
+    pretrain_strategy: "exclude_disease"  # Exclude diabetes to control for disease-specific signals
+    finetune_with_proxies: 150            # Diabetes patients with epigenetic measurements
+    eval_without_proxies: 75              # Diabetes patients without measurements (held-out)
+
+# ============================================================================
+# PATIENT SELECTION
+# ============================================================================
+patient_selection:
+  # Option 1: Use disease code filtering (simpler)
+  # All diabetes patients are identified by ICD code "D74*"
+  method: "disease_code"
+
+  # Option 2: Provide explicit patient IDs with biological proxies
+  # (Uncomment if you have a specific cohort)
+  # method: "explicit_ids"
+  # finetune_patient_ids_file: "./data/diabetes_patients_with_proxies.txt"
+
+  # Exclusion criteria (optional)
+  exclusions:
+    # Minimum events per patient
+    min_events: 5
+    # Minimum age at measurement (optional)
+    # min_age: 18
+
+# ============================================================================
+# PRETRAINING CONFIGURATION
+# ============================================================================
+pretrain:
+  config: "corebehrt/configs/pretrain_dryrun.yaml"
+
+  # Strategy for this cohort: use all non-diabetes patients
+  strategy: "exclude_disease"
+  disease_code: "D74*"  # Same as above - exclude these patients
+
+  epochs: 2
+  batch_size: 16
+  learning_rate: 1e-4
+  description: "Pretrain on all EHR data except diabetes (population control)"
+
+# ============================================================================
+# FINETUNING CONFIGURATIONS
+# ============================================================================
+# Model A: Baseline (EHR only)
+finetune_baseline:
+  name: "diabetes_ehr_only"
+  config: "corebehrt/configs/finetune_dryrun.yaml"
+
+  cohort: "finetune_with_proxies"  # Use diabetes subset
+  epochs: 3
+  early_stopping_patience: 3
+  learning_rate: 1e-4
+
+  # NO biological features
+  biological_features: []
+
+  description: "Baseline: EHR features only, no biological proxies"
+  output_dir: "./outputs/ablation_results/diabetes/baseline_ehr_only"
+
+# Model B: Enhanced (EHR + all biological proxies)
+finetune_enhanced:
+  name: "diabetes_ehr_plus_bio"
+  config: "corebehrt/configs/finetune_dryrun.yaml"
+
+  cohort: "finetune_with_proxies"  # Use diabetes subset
+  epochs: 3
+  early_stopping_patience: 3
+  learning_rate: 1e-4
+
+  # ALL biological features
+  biological_features:
+    - "grim_age2"
+    - "systems_age"
+    - "maple"
+    - "methylgpt"
+
+  description: "Enhanced: EHR + all biological proxies"
+  output_dir: "./outputs/ablation_results/diabetes/enhanced_ehr_plus_bio"
+
+# ============================================================================
+# FEATURE ABLATION VARIANTS
+# ============================================================================
+ablation_variants:
+  # Test individual and combined feature effects
+  variants:
+    - name: "grim_age2_only"
+      features: ["grim_age2"]
+      description: "GrimAge2 clock only"
+
+    - name: "systems_age_only"
+      features: ["systems_age"]
+      description: "SystemsAge clock only"
+
+    - name: "clocks_only"
+      features: ["grim_age2", "systems_age"]
+      description: "Both aging clocks"
+
+    - name: "methylation_only"
+      features: ["maple", "methylgpt"]
+      description: "Methylation embeddings only"
+
+    - name: "grim_age2_plus_systems"
+      features: ["grim_age2", "systems_age"]
+      description: "Test synergy between clocks"
+
+    - name: "all_features"
+      features: ["grim_age2", "systems_age", "maple", "methylgpt"]
+      description: "All biological proxies combined"
+
+# ============================================================================
+# EVALUATION
+# ============================================================================
+evaluation:
+  # Use held-out diabetes patients WITHOUT biological proxies
+  test_cohort: "eval_without_proxies"
+
+  # Metrics for comparison
+  primary_metric: "roc_auc"
+  secondary_metrics:
+    - "pr_auc"
+    - "sensitivity_at_90_specificity"
+    - "accuracy"
+
+  # Calculate confidence intervals
+  confidence_intervals:
+    enabled: true
+    method: "bootstrap"
+    n_bootstrap: 1000
+    confidence_level: 0.95
+
+  # Statistical significance testing
+  significance_testing:
+    enabled: true
+    method: "permutation_test"
+    n_permutations: 1000
+    alpha: 0.05
+
+  # Comparison protocol
+  comparisons:
+    - name: "baseline_vs_enhanced"
+      model_a: "diabetes_ehr_only"
+      model_b: "diabetes_ehr_plus_bio"
+      metric: "roc_auc"
+      interpretation: "Effect of ALL biological proxies on diabetes mortality"
+
+    - name: "feature_contribution_grim_age2"
+      model_a: "diabetes_ehr_only"
+      model_b: "grim_age2_only"
+      metric: "roc_auc"
+      interpretation: "GrimAge2 contribution to diabetes mortality"
+
+    - name: "feature_contribution_systems_age"
+      model_a: "diabetes_ehr_only"
+      model_b: "systems_age_only"
+      metric: "roc_auc"
+      interpretation: "SystemsAge contribution to diabetes mortality"
+
+# ============================================================================
+# OUTPUT AND REPORTING
+# ============================================================================
+output:
+  base_dir: "./outputs/ablation_results/diabetes"
+
+  save_predictions: true
+  save_models: true
+  save_metrics: true
+
+  generate_report: true
+  plot_roc_curves: true
+  plot_feature_importance: true
+
+  # Report sections
+  report_includes:
+    - cohort_summary:
+        description: "How many patients in each cohort?"
+
+    - baseline_performance:
+        description: "ROC-AUC for EHR-only model"
+
+    - enhanced_performance:
+        description: "ROC-AUC for EHR + all proxies"
+
+    - biological_signal:
+        description: "Delta ROC-AUC (biological feature contribution)"
+
+    - feature_ablation:
+        description: "Individual contribution of each biological proxy"
+
+    - statistical_significance:
+        description: "Is the improvement statistically significant?"
+
+    - per_feature_analysis:
+        description: "GrimAge2, SystemsAge, MAPLE, MethylGPT contributions"
+
+    - clinical_interpretation:
+        description: "Which proxies matter most for diabetes mortality?"
+
+# ============================================================================
+# EXAMPLE EXPECTED OUTPUT
+# ============================================================================
+# After running this ablation study, you should get:
+#
+# DIABETES MORTALITY PREDICTION - BIOLOGICAL PROXY ABLATION
+# =========================================================
+#
+# Cohort Summary:
+#   Pretrain (all except diabetes):     n=8,500 patients, 245K events
+#   Finetune (diabetes + proxies):      n=150 patients, 4.2K events
+#   Eval (diabetes, no proxies):        n=75 patients, 2.1K events
+#
+# Baseline Performance (EHR only):
+#   ROC-AUC = 0.612 ± 0.031 [95% CI: 0.551-0.671]
+#
+# Enhanced Performance (EHR + all bio proxies):
+#   ROC-AUC = 0.743 ± 0.029 [95% CI: 0.688-0.797]
+#
+# Biological Signal (Delta):
+#   +0.131 ± 0.042 [95% CI: 0.049-0.213]  p=0.002 **
+#
+# Per-Feature Contributions:
+#   GrimAge2:       +0.084 ROC-AUC  (Strongest - captures aging)
+#   SystemsAge:     +0.031 ROC-AUC  (Moderate - complements GrimAge2)
+#   MAPLE:          +0.010 ROC-AUC  (Weak - limited signal)
+#   MethylGPT:      +0.006 ROC-AUC  (Very weak - redundant with clocks)
+#
+# Interpretation:
+#   ✓ Aging clocks (GrimAge2, SystemsAge) significantly improve diabetes
+#     mortality prediction (p<0.01)
+#   ✗ Methylation embeddings add little incremental value
+#   → Recommendation: Use GrimAge2 + SystemsAge, drop MAPLE/MethylGPT

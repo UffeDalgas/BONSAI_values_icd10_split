@@ -1,0 +1,92 @@
+# Ablation Study: GrimAge2 + SystemsAge signal in Heart Failure mortality
+#
+# Experimental Design:
+#   Pretrain: All data EXCEPT heart_failure patients
+#   Finetune: Heart failure subset WITH biological proxies (n=100)
+#   Eval: Heart failure samples WITHOUT proxies (n=50, held-out test)
+#   Compare: ROC-AUC with/without GrimAge2, SystemsAge, MAPLE, MethylGPT
+#
+# This answers: "Do aging clocks + protein scores improve mortality prediction in HF?"
+
+study:
+  disease: "heart_failure"
+  exclude_from_pretrain: "heart_failure"
+  finetune_subset_size: 100  # HF samples with biological proxies
+  eval_subset_size: 50        # HF samples without proxies (held-out test)
+
+pretrain:
+  config: "corebehrt/configs/pretrain_dryrun.yaml"
+  strategy: "exclude_disease"  # Only use non-heart_failure data
+  epochs: 2
+  batch_size: 16
+
+biological_features:
+  - "grim_age2"           # GrimAge2 clock
+  - "systems_age"         # SystemsAge clock
+  - "maple"               # MAPLE methylation embeddings (32-dim)
+  - "methylgpt"           # MethylGPT embeddings (64-dim)
+
+finetune_no_features:
+  name: "baseline_ehr_only"
+  config: "corebehrt/configs/finetune_dryrun.yaml"
+  epochs: 3
+  early_stopping: 3
+  features_injected: []  # EHR ONLY - no biological data
+  description: "Baseline: EHR features only, no biological proxies"
+
+finetune_with_features:
+  name: "enhanced_ehr_plus_bio"
+  config: "corebehrt/configs/finetune_dryrun.yaml"
+  epochs: 3
+  early_stopping: 3
+  features_injected: ["grim_age2", "systems_age", "maple", "methylgpt"]
+  description: "Enhanced: EHR + all biological proxies"
+
+evaluation:
+  test_set: "held_out_heart_failure"
+  metrics:
+    - "roc_auc"
+    - "pr_auc"
+    - "top_1_accuracy"
+    - "top_10_accuracy"
+
+  comparison:
+    - name: "baseline_vs_enhanced"
+      model_a: "baseline_ehr_only"
+      model_b: "enhanced_ehr_plus_bio"
+      delta_metric: "roc_auc"  # Feature contribution to mortality prediction
+      interpretation: "Absolute ROC-AUC improvement from adding biological proxies"
+
+ablation_variants:
+  # Test individual feature contributions
+  - name: "grim_age2_only"
+    features: ["grim_age2"]
+
+  - name: "systems_age_only"
+    features: ["systems_age"]
+
+  - name: "protein_only"
+    features: ["systems_age"]  # If systems_age includes proteins
+
+  - name: "methylation_only"
+    features: ["maple", "methylgpt"]
+
+  - name: "clocks_only"
+    features: ["grim_age2", "systems_age"]
+
+  - name: "embeddings_only"
+    features: ["maple", "methylgpt"]
+
+output:
+  results_dir: "./outputs/ablation_results/heart_failure"
+  save_metrics: true
+  plot_roc_curves: true
+  generate_report: true
+
+  report_includes:
+    - "Baseline ROC-AUC (EHR only)"
+    - "Enhanced ROC-AUC (EHR + all features)"
+    - "Delta ROC-AUC (biological signal)"
+    - "Per-feature contribution analysis"
+    - "Confidence intervals and statistical significance"
+    - "Interpretation for clinical validity"

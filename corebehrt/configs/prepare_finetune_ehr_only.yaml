@@ -1,0 +1,11 @@
+data:
+  type: finetune
+  mode: tuning
+
+paths:
+  data_dir: ./outputs/tokenized
+  cohort: ./outputs/finetuning/cohorts_no_values
+  prepared_data: ./outputs/finetuning/processed_data_no_values
+  pretrain_model: ./outputs/pretraining_dryrun
+
+biological_features: []

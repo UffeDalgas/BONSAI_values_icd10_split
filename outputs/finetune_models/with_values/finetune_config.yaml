@@ -1,0 +1,42 @@
+biological_features:
+- grim_age_v2
+- systems_age
+evaluate: false
+logging:
+  level: INFO
+  path: ./outputs/logs
+metrics:
+  accuracy:
+    _target_: corebehrt.modules.monitoring.metrics.Accuracy
+    threshold: 0.5
+  pr_auc:
+    _target_: corebehrt.modules.monitoring.metrics.PR_AUC
+  roc_auc:
+    _target_: corebehrt.modules.monitoring.metrics.ROC_AUC
+model:
+  cls: default
+  value_embedding_mode: concat
+optimizer:
+  eps: 1.0e-06
+  lr: 0.0005
+paths:
+  model: ./outputs/finetune_models/with_values
+  prepared_data: ./outputs/finetuning/processed_data_with_values/
+  pretrain_model: ./outputs/pretraining_dryrun
+scheduler:
+  _target_: transformers.get_linear_schedule_with_warmup
+  num_training_steps: 20
+  num_warmup_steps: 5
+trainer_args:
+  batch_size: 8
+  checkpoint_frequency: 1
+  early_stopping: 2
+  effective_batch_size: 8
+  epochs: 2
+  gradient_clip:
+    clip_value: 1.0
+  info: true
+  n_layers_to_freeze: 1
+  shuffle: true
+  stopping_criterion: roc_auc
+  val_batch_size: 8

@@ -1,0 +1,299 @@
+import torch
+import torch.nn as nn
+
+from corebehrt.constants.model import (
+    TIME2VEC_ABSPOS_SCALE,
+    TIME2VEC_AGE_SCALE,
+    TIME2VEC_MAX_CLIP,
+    TIME2VEC_MIN_CLIP,
+    TIME2VEC_AGE_SHIFT,
+    TIME2VEC_ABSPOS_SHIFT,
+)
+from corebehrt.constants.data import DEFAULT_VOCABULARY, PAD_TOKEN
+from typing import Optional
+
+
+class EhrEmbeddings(nn.Module):
+    """
+    Forward inputs:
+        input_ids: torch.LongTensor             - (batch_size, sequence_length)
+        token_type_ids: torch.LongTensor        - (batch_size, sequence_length)
+        position_ids: dict(str, torch.Tensor)   - (batch_size, sequence_length)
+            We abuse huggingface's standard position_ids to pass additional information (age, abspos)
+            This makes BertModel's forward method compatible with our EhrEmbeddings
+
+    Parameters:
+        vocab_size: int                         - size of the vocabulary
+        hidden_size: int                        - size of the hidden layer
+        type_vocab_size: int                    - size of max segments
+        embedding_dropout: float                - dropout probability
+        pad_token_id: int                       - token ID used for padding
+        age_scale: float                        - scaling factor for age embeddings
+        abspos_scale: float                     - scaling factor for absolute position embeddings
+        age_shift: float                        - shift value for age embeddings
+        abspos_shift: float                     - shift value for absolute position embeddings
+    """
+
+    def __init__(
+        self,
+        vocab_size: int,
+        hidden_size: int,
+        type_vocab_size: int,
+        embedding_dropout: float,
+        pad_token_id: int = DEFAULT_VOCABULARY[PAD_TOKEN],
+        age_scale: float = TIME2VEC_AGE_SCALE,
+        abspos_scale: float = TIME2VEC_ABSPOS_SCALE,
+        age_shift: float = TIME2VEC_AGE_SHIFT,
+        abspos_shift: float = TIME2VEC_ABSPOS_SHIFT,
+        value_embedding_mode: str = None,
+    ):
+        super().__init__()
+        self.LayerNorm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(embedding_dropout)
+        self.hidden_size = hidden_size
+
+        # Initialize embeddings
+        self.concept_embeddings = nn.Embedding(
+            vocab_size, hidden_size, padding_idx=pad_token_id
+        )
+
+        self.value_embedding_mode = value_embedding_mode
+        if value_embedding_mode in ["film", "concat", "linear"]:
+            self.separate_value_embedding = True
+            self.value_embeddings = SeparateContinuousEmbedding(
+                hidden_size, value_embedding_mode
+            )
+        else:
+            self.separate_value_embedding = False
+            self.value_embeddings = ContinuousEmbedding(hidden_size)
+
+        self.segment_embeddings = nn.Embedding(type_vocab_size, hidden_size)
+        self.age_embeddings = Time2Vec(
+            hidden_size,
+            shift=age_shift,
+            scale=age_scale,
+            clip_min=TIME2VEC_MIN_CLIP,
+            clip_max=TIME2VEC_MAX_CLIP,
+        )
+        self.abspos_embeddings = Time2Vec(
+            hidden_size,
+            shift=abspos_shift,
+            scale=abspos_scale,
+            clip_min=TIME2VEC_MIN_CLIP,
+            clip_max=TIME2VEC_MAX_CLIP,
+        )
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor = None,  # concepts
+        values: torch.Tensor = None,
+        segments: torch.LongTensor = None,
+        age: torch.Tensor = None,
+        abspos: torch.Tensor = None,
+        inputs_embeds: torch.Tensor = None,
+    ) -> torch.Tensor:
+        if not self._validate_inputs(
+            input_ids, segments, age, abspos, inputs_embeds, values
+        ):
+            raise ValueError("Invalid input arguments")
+        if inputs_embeds is not None:
+            return inputs_embeds
+
+        # Separate embedding for concepts and values
+        if not self.separate_value_embedding:
+            embeddings = self.get_combined_input_embeddings(input_ids, values)
+
+        else:
+            # Separate embedding for concepts and values
+            concept_embeddings = self.concept_embeddings(input_ids)
+            embeddings = self.value_embeddings(values, concept_embeddings)
+
+        embeddings += self.segment_embeddings(segments)
+        embeddings += self.age_embeddings(age)
+        embeddings += self.abspos_embeddings(abspos)
+
+        embeddings = self.LayerNorm(embeddings)
+        embeddings = self.dropout(embeddings)
+
+        return embeddings
+
+    @torch.jit.script
+    def _validate_inputs(
+        input_ids: Optional[torch.Tensor],
+        segments: Optional[torch.Tensor],
+        age: Optional[torch.Tensor],
+        abspos: Optional[torch.Tensor],
+        inputs_embeds: Optional[torch.Tensor],
+        values: Optional[torch.Tensor],
+    ) -> bool:
+        if inputs_embeds is not None:
+            return not any(
+                x is not None for x in [input_ids, segments, age, abspos, values]
+            )
+        return all(x is not None for x in [input_ids, segments, age, abspos, values])
+
+    def get_combined_input_embeddings(
+        self, input_ids: torch.LongTensor, values: torch.Tensor
+    ) -> torch.Tensor:
+        value_mask = ~torch.isnan(values)
+
+        B, F = input_ids.shape
+
+        # Get the target dtype from model parameters
+        target_dtype = next(self.parameters()).dtype
+
+        # Process categorical values
+        cat_vals = input_ids[~value_mask].long()
+        cat_embeddings = self.concept_embeddings(cat_vals).to(target_dtype)
+
+        # Process float values
+        float_vals = values[value_mask].float()
+        float_embeddings = self.value_embeddings(float_vals).to(target_dtype)
+
+        # Create output tensor with the target dtype
+        out = torch.zeros(
+            B, F, self.hidden_size, device=input_ids.device, dtype=target_dtype
+        )
+
+        # Recombined
+        out[~value_mask] = cat_embeddings
+        out[value_mask] = float_embeddings
+
+        return out
+
+
+class ContinuousEmbedding(nn.Module):
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.hidden_size = hidden_size
+        # self.linear_layer = nn.Linear(1, hidden_size)
+        self.value_layer = nn.Sequential(
+            nn.Linear(1, hidden_size), nn.ReLU(), nn.Linear(hidden_size, hidden_size)
+        )
+
+    def forward(self, values: torch.Tensor) -> torch.Tensor:
+        value_embed = self.value_layer(values.unsqueeze(-1))  # (B, T, H)
+        return value_embed
+
+
+class SeparateContinuousEmbedding(nn.Module):
+    def __init__(self, hidden_size: int, value_embedding_mode: str = None):
+        super().__init__()
+        self.value_embedding_mode = value_embedding_mode
+        self.hidden_size = hidden_size
+
+        self.value_proj = nn.Sequential(
+            nn.Linear(1, hidden_size), nn.ReLU(), nn.Linear(hidden_size, hidden_size)
+        )
+
+        if self.value_embedding_mode == "film":
+            self.gamma_layer = nn.Linear(hidden_size, hidden_size)
+            self.beta_layer = nn.Linear(hidden_size, hidden_size)
+
+        elif self.value_embedding_mode == "concat":
+            self.concat_proj = nn.Linear(2 * hidden_size, hidden_size)
+
+    def forward(
+        self, values: torch.Tensor, concept_embeds: torch.Tensor
+    ) -> torch.Tensor:
+        mask = (~torch.isnan(values)).float().unsqueeze(-1)
+        # Replace NaN with 0 before projection to avoid NaN propagation
+        values_safe = torch.where(torch.isnan(values), torch.zeros_like(values), values)
+        value_embed = self.value_proj(values_safe.unsqueeze(-1)) * mask  # (B, T, H)
+
+        if self.value_embedding_mode == "film":
+            gamma = self.gamma_layer(concept_embeds)
+            beta = self.beta_layer(concept_embeds)
+            return (gamma * value_embed + beta) * mask + concept_embeds * (1 - mask)
+
+        elif self.value_embedding_mode == "concat":
+            combined = torch.cat([concept_embeds, value_embed], dim=-1)
+            return self.concat_proj(combined) * mask + concept_embeds * (1 - mask)
+
+        elif self.value_embedding_mode == "linear":
+            return value_embed
+
+        else:
+            raise ValueError(
+                f"Unknown value_embedding_mode: {self.value_embedding_mode}"
+            )
+
+
+class Time2Vec(torch.nn.Module):
+    """Time2Vec embedding layer that combines linear and periodic components.
+
+    This layer transforms temporal inputs using a combination of linear and periodic embeddings:
+    - First component (i=0): linear transformation w0*t + phi0
+    - Remaining components: periodic transformations f(w*t + phi)
+
+    The input can optionally be shifted and scaled before transformation, and the linear
+    component can be clipped to a specified range.
+
+    Parameters:
+        output_dim: int
+            Dimension of the output embedding vector. Default: 768
+        function: callable
+            Periodic function to use (e.g., torch.cos). Default: torch.cos
+        init_scale: float
+            Scaling factor applied to input values before transformation. Default: 1
+        clip_min: float, optional
+            Minimum value for clipping the linear component
+        clip_max: float, optional
+            Maximum value for clipping the linear component
+        shift: float, optional
+            Constant shift applied to input values before scaling and transformation
+
+    Forward Input:
+        tau: torch.Tensor
+            Input temporal values of shape (batch_size, sequence_length)
+
+    Returns:
+        torch.Tensor: Concatenated linear and periodic embeddings
+            of shape (batch_size, sequence_length, output_dim)
+    """
+
+    def __init__(
+        self,
+        output_dim: int = 768,
+        function: callable = torch.cos,
+        shift: float = 0,
+        scale: float = 1,
+        clip_min: float = None,
+        clip_max: float = None,
+    ):
+        """
+        Parameters:
+            output_dim: int - dimension of the output
+            function: callable - function to use for the time2vec transformation
+            init_scale: float - scale of the initial parameters
+            clip_min: float - minimum value of the output
+            clip_max: float - maximum value of the output
+            shift: float - shift of the output
+        """
+        super().__init__()
+        self.f = function
+        self.clip_min = clip_min
+        self.clip_max = clip_max
+        # for i = 0
+        self.w0 = torch.nn.Parameter(torch.randn(1, 1))
+        self.phi0 = torch.nn.Parameter(torch.randn(1))
+        # for 1 <= i <= k (output_dim)
+        self.w = torch.nn.Parameter(torch.randn(1, output_dim - 1))
+        self.phi = torch.nn.Parameter(torch.randn(output_dim - 1))
+        self.shift = shift
+        self.scale = scale
+
+    def forward(self, tau: torch.Tensor) -> torch.Tensor:
+        tau = (tau + self.shift) * self.scale
+
+        tau = tau.unsqueeze(2)  # (batch_size, sequence_length, 1)
+
+        linear_1 = torch.matmul(tau, self.w0) + self.phi0
+        linear_2 = torch.matmul(tau, self.w)
+
+        if self.clip_min is not None or self.clip_max is not None:
+            linear_1 = torch.clamp(linear_1, self.clip_min, self.clip_max)
+
+        periodic = self.f(linear_2 + self.phi)
+
+        return torch.cat((linear_1, periodic), dim=-1)

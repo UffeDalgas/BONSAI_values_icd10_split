@@ -1,0 +1,28 @@
+cv_folds: 2
+index_date:
+  absolute:
+    day: 26
+    month: 1
+    year: 2015
+  mode: relative
+  relative:
+    n_hours_from_exposure: -24
+logging:
+  level: INFO
+  path: ./outputs/logs
+paths:
+  cohort: ./outputs/cohort/finetune/
+  features: ./outputs/features
+  initial_pids: ./outputs/tokenized/pids_tuning.pt
+  outcome: ./outputs/outcomes/TEST_OUTCOME.csv
+  outcomes: ./outputs/outcomes/
+  patients_info: ./outputs/features/patient_info.parquet
+  tokenized: ./outputs/tokenized
+selection:
+  age:
+    max_years: 120
+    min_years: 18
+  exclude_prior_outcomes: false
+  exposed_only: false
+test_ratio: 0.1
+val_ratio: 0.1
