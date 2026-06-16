@@ -1,0 +1,16 @@
+logging:
+  level: INFO
+  path: ./outputs/logs
+
+paths:
+  data: ./data/meds_for_bonsai
+  splits: [ train, tuning, held_out ]
+  outcomes: ./outputs/outcomes/
+  features: ./outputs/features/
+
+outcomes:
+  MORTALITY:
+    type: [ code ]
+    match: [ [ 'DOD' ] ]
+    match_how: exact
+    case_sensitive: true
