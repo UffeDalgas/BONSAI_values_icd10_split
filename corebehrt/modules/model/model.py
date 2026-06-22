@@ -59,7 +59,7 @@ class CorebehrtEncoder(ModernBertModel):
         self.embeddings = EhrEmbeddings(
             vocab_size=config.vocab_size,
             hidden_size=config.hidden_size,
-            type_vocab_size=config.type_vocab_size,
+            type_vocab_size=getattr(config, "type_vocab_size", 2),
             embedding_dropout=config.embedding_dropout,
             pad_token_id=config.pad_token_id,
             age_scale=getattr(config, "age_scale", TIME2VEC_AGE_SCALE),

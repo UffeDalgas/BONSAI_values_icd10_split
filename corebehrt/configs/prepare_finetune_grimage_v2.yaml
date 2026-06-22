@@ -1,0 +1,26 @@
+logging:
+  level: INFO
+  path: ./outputs/logs
+
+paths:
+  ## INPUTS
+  features: ./outputs/features_grimage_v2
+  tokenized: ./outputs/tokenized_grimage_v2
+  cohort: ./outputs/cohort/finetune/        # SHARED folds (run select_cohort once)
+  outcomes: ./outputs/outcomes
+  outcome: MORTALITY.csv                     # from create_outcomes_mortality
+  ## OUTPUTS
+  prepared_data: ./outputs/finetuning/processed_data_grimage_v2/
+
+data:
+  type: "finetune"
+  truncation_len: 30
+  min_len: 2
+
+outcome:
+  n_hours_censoring: -10
+  n_hours_start_follow_up: 1
+  n_hours_end_follow_up: null
+
+concept_pattern_hours_delay:
+  "^D": 72

@@ -1,0 +1,28 @@
+logging:
+  level: INFO
+  path: ./outputs/logs
+
+paths:
+  data: ./data/meds_for_bonsai
+  tokenized: ./outputs/tokenized_baseline
+  features: ./outputs/features_baseline
+
+features:
+  values:
+    value_type: "concat"            # folds numeric_value (incl. BIO/* concepts) into embeddings
+    value_creator_kwargs:
+      bin_values: false
+      bin_mapping_func:
+        _target_: corebehrt.functional.features.values.power_bin_info_efficiency_mean
+  agg_kwargs:
+    regex: ^(?:LAB).*
+    agg_func: "first"
+    agg_window: 25
+
+tokenizer:
+  sep_tokens: false
+  cls_token: true
+
+excluder:
+  min_age: -1
+  max_age: 120

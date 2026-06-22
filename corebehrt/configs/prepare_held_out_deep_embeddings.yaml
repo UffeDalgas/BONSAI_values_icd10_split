@@ -1,0 +1,21 @@
+logging:
+  level: INFO
+  path: ./outputs/logs
+paths:
+  features: ./outputs/features_deep_embeddings
+  tokenized: ./outputs/tokenized_deep_embeddings
+  cohort: ./outputs/cohort/held_out/
+  outcomes: ./outputs/outcomes
+  outcome: MORTALITY.csv
+  prepared_data: ./outputs/testing/held_out/processed_data_deep_embeddings/
+data:
+  type: "test"
+  test_modes: ["held_out"]
+  truncation_len: 30
+  min_len: 2
+outcome:
+  n_hours_censoring: -10
+  n_hours_start_follow_up: 1
+  n_hours_end_follow_up: null
+concept_pattern_hours_delay:
+  "^D": 72

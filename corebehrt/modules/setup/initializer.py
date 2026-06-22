@@ -14,8 +14,37 @@ from corebehrt.modules.model.model import (
 )
 from corebehrt.modules.setup.loader import ModelLoader
 from corebehrt.modules.trainer.utils import get_sampler, get_loss_weight
+from corebehrt.functional.io_operations.load import load_vocabulary
 
 logger = logging.getLogger(__name__)
+
+
+def _grow_concept_embeddings(model, target_vocab_size: int) -> None:
+    """Grow the concept-embedding table to `target_vocab_size`, preserving pretrained rows.
+
+    Enables finetune-only value injection: the pretrained model never saw the BIO/* concepts,
+    so its embedding table is too small. We extend it (new rows ~N(0, 0.02), like fresh init)
+    and the new biological-concept embeddings are learned during finetuning. Pretrained rows
+    for all existing concepts are kept intact.
+    """
+    import torch.nn as nn
+
+    emb = model.embeddings.concept_embeddings
+    old_size, dim = emb.weight.shape
+    if target_vocab_size <= old_size:
+        return
+    new_emb = nn.Embedding(target_vocab_size, dim, padding_idx=emb.padding_idx)
+    with torch.no_grad():
+        nn.init.normal_(new_emb.weight, mean=0.0, std=0.02)
+        if emb.padding_idx is not None:
+            new_emb.weight[emb.padding_idx].zero_()
+        new_emb.weight[:old_size] = emb.weight
+    new_emb.to(emb.weight.device)
+    model.embeddings.concept_embeddings = new_emb
+    if hasattr(model, "config"):
+        model.config.vocab_size = target_vocab_size
+    logger.info(f"Grew concept embeddings {old_size} -> {target_vocab_size} "
+                f"({target_vocab_size - old_size} new rows for value-injection concepts)")
 
 
 class Initializer:
@@ -61,6 +90,14 @@ class Initializer:
                 checkpoint=self.checkpoint,
                 add_config=add_config,
             )
+            # Finetune-only value injection: if the finetune vocab (paths.tokenized) is larger
+            # than the pretrained model's (it contains BIO/* concepts), grow the embedding table.
+            tok = self.cfg.paths.get("tokenized")
+            if tok:
+                try:
+                    _grow_concept_embeddings(model, len(load_vocabulary(tok)))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Could not grow concept embeddings from {tok}: {e}")
             model.to(self.device)
             return model
         else:

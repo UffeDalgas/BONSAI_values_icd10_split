@@ -12,5 +12,5 @@ outcomes:
   MORTALITY:
     type: [ code ]
     match: [ [ 'DOD' ] ]
-    match_how: exact
+    match_how: startswith
     case_sensitive: true

@@ -33,6 +33,20 @@ class ModelLoader:
         self, model: torch.nn.Module, checkpoint: dict
     ) -> torch.nn.Module:
         """Load state dict into model. If embeddings are not loaded, raise an error."""
+        # Match the model's concept-embedding size to the checkpoint before loading. Needed when
+        # reloading a finetuned model whose embeddings were grown for value injection (BIO/*),
+        # since the model is rebuilt from the pretrain config (smaller vocab).
+        sd = checkpoint["model_state_dict"]
+        ckpt_emb = sd.get("embeddings.concept_embeddings.weight")
+        if ckpt_emb is not None and hasattr(model, "embeddings"):
+            cur = model.embeddings.concept_embeddings
+            if ckpt_emb.shape[0] != cur.weight.shape[0]:
+                import torch.nn as nn
+                model.embeddings.concept_embeddings = nn.Embedding(
+                    ckpt_emb.shape[0], cur.weight.shape[1], padding_idx=cur.padding_idx
+                )
+                if hasattr(model, "config"):
+                    model.config.vocab_size = ckpt_emb.shape[0]
         load_result = model.load_state_dict(
             checkpoint["model_state_dict"], strict=False
         )

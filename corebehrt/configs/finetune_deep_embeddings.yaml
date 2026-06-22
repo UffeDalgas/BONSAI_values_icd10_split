@@ -1,0 +1,47 @@
+logging:
+  level: INFO
+  path: ./outputs/logs
+
+paths:
+  prepared_data: ./outputs/finetuning/processed_data_deep_embeddings/
+  pretrain_model: ./outputs/pretraining_dryrun     # <-- point at YOUR pretrained model
+  tokenized: ./outputs/tokenized_deep_embeddings        # finetune vocab (for value-injection embedding grow)
+  model: ./outputs/finetune_models/deep_embeddings
+
+model:
+  cls: default
+  value_embedding_mode: "concat"     # same for every arm; BIO/* concepts present only in value arms
+
+trainer_args:
+  batch_size: 8
+  val_batch_size: 8
+  effective_batch_size: 8
+  epochs: 2
+  info: true
+  gradient_clip:
+    clip_value: 1.0
+  shuffle: true
+  checkpoint_frequency: 1
+  early_stopping: 2
+  stopping_criterion: roc_auc
+  n_layers_to_freeze: 1
+
+optimizer:
+  lr: 5e-4
+  eps: 1e-6
+
+scheduler:
+  _target_: transformers.get_linear_schedule_with_warmup
+  num_warmup_steps: 5
+  num_training_steps: 20
+
+metrics:
+  accuracy:
+    _target_: corebehrt.modules.monitoring.metrics.Accuracy
+    threshold: 0.5
+  roc_auc:
+    _target_: corebehrt.modules.monitoring.metrics.ROC_AUC
+  pr_auc:
+    _target_: corebehrt.modules.monitoring.metrics.PR_AUC
+
+evaluate: false
