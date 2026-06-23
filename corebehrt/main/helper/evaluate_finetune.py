@@ -56,11 +56,28 @@ def compute_metrics(cfg, targets, all_probas, logger):
     targets = np.asarray(targets)
     all_probas = np.asarray(all_probas)
 
+    # --- label distribution (same targets across folds) ---
+    n_total = int(targets.size)
+    n_pos = int((targets == 1).sum())
+    n_neg = int((targets == 0).sum())
+    prev = n_pos / n_total if n_total else float("nan")
+    logger.info(f"Label distribution: total={n_total}  pos(1)={n_pos}  neg(0)={n_neg}  "
+                f"prevalence={prev:.4f}")
+    pd.DataFrame([{"n_total": n_total, "label_0": n_neg, "label_1": n_pos,
+                   "prevalence": prev}]).to_csv(
+        join(cfg.paths.predictions, "label_distribution.csv"), index=False)
+
     metrics = {k: instantiate_function(v) for k, v in cfg.metrics.items()}
+    thr = float(getattr(cfg, "decision_threshold", 0.5))
     fold_metrics_list = []
 
     for n_fold, probas in enumerate(all_probas, start=1):
         fold_metrics = {name: func(targets, probas) for name, func in metrics.items()}
+        fold_metrics.update(_threshold_metrics(targets, probas, thr))
+        fold_metrics["n_total"] = n_total
+        fold_metrics["label_0"] = n_neg
+        fold_metrics["label_1"] = n_pos
+        fold_metrics["prevalence"] = round(prev, 4)
         fold_metrics["fold"] = f"fold_{n_fold}"
         fold_metrics_list.append(fold_metrics)
 
@@ -74,3 +91,26 @@ def compute_metrics(cfg, targets, all_probas, logger):
     for key in avg_metrics:
         if key != "fold":
             logger.info(f"{key}: {avg_metrics[key]:.4f}")
+
+
+def _threshold_metrics(targets, probas, thr: float = 0.5) -> dict:
+    """Threshold-based + calibration metrics that matter for imbalanced mortality."""
+    from sklearn.metrics import (
+        precision_score, recall_score, f1_score, matthews_corrcoef,
+        balanced_accuracy_score, brier_score_loss, confusion_matrix,
+    )
+    preds = (np.asarray(probas) >= thr).astype(int)
+    out = {}
+    try:
+        tn, fp, fn, tp = confusion_matrix(targets, preds, labels=[0, 1]).ravel()
+        out["tp"], out["fp"], out["tn"], out["fn"] = int(tp), int(fp), int(tn), int(fn)
+        out["sensitivity_recall"] = recall_score(targets, preds, zero_division=0)
+        out["specificity"] = tn / (tn + fp) if (tn + fp) else float("nan")
+        out["precision_ppv"] = precision_score(targets, preds, zero_division=0)
+        out["f1"] = f1_score(targets, preds, zero_division=0)
+        out["balanced_accuracy"] = balanced_accuracy_score(targets, preds)
+        out["mcc"] = matthews_corrcoef(targets, preds) if len(set(preds)) > 1 else 0.0
+        out["brier"] = brier_score_loss(targets, probas)
+    except Exception:
+        pass
+    return out

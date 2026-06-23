@@ -26,3 +26,11 @@ lightning_logs/
 
 # Local data (provide via your own paths)
 data/meds_*/
+corebehrt/configs/h*y/
+
+# ── Patient-derived data — NEVER commit ───────────────────────────────
+/metadata.csv
+condition_*.csv
+*drawdate*.csv
+*draw*.csv
+*.parquet

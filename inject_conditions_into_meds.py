@@ -85,7 +85,7 @@ def inject_split(in_dir: Path, out_dir: Path, cond: pd.DataFrame,
     return n_rows, n_subj
 
 
-def load_draw_dates(path: Path | None, id_map: Path | None) -> dict | None:
+def load_draw_dates(path: Path | None, id_map: Path | None, dayfirst: bool = False) -> dict | None:
     """Read a CSV of subject_id,draw_date -> {subject_id: Timestamp} (the prediction anchor)."""
     if path is None:
         return None
@@ -98,7 +98,7 @@ def load_draw_dates(path: Path | None, id_map: Path | None) -> dict | None:
     if id_map is not None:
         m = pd.read_csv(id_map, dtype=str); mp = dict(zip(m.iloc[:, 0], m.iloc[:, 1]))
         s.index = [mp.get(x, x) for x in s.index]
-    return {k: pd.to_datetime(v) for k, v in s.items() if pd.notna(v)}
+    return {k: pd.to_datetime(v, dayfirst=dayfirst) for k, v in s.items() if pd.notna(v)}
 
 
 def main():
@@ -118,11 +118,13 @@ def main():
                          "(for select_cohort paths.exclude_pids). Needs --sample-date-csv.")
     ap.add_argument("--exclude-out", default=None,
                     help="Where to write the over-max-gap exclude list (CSV of subject_id).")
+    ap.add_argument("--dayfirst", action="store_true",
+                    help="Parse draw dates as day-first (DD-MM-YYYY), e.g. 23-06-2026.")
     args = ap.parse_args()
 
     idmap = Path(args.id_map) if args.id_map else None
     cond = load_condition(Path(args.condition), idmap)
-    draw_dates = load_draw_dates(Path(args.sample_date_csv) if args.sample_date_csv else None, idmap)
+    draw_dates = load_draw_dates(Path(args.sample_date_csv) if args.sample_date_csv else None, idmap, args.dayfirst)
     print(f"condition: {Path(args.condition).name} -> {cond.shape[1]} feature cols, {len(cond)} subjects")
     print(f"  columns -> concepts: {', '.join('BIO/'+c for c in cond.columns)}")
     print(f"  BIO anchor: {'blood-draw date (per subject)' if draw_dates else 'EARLIEST timestamp (⚠ provide --sample-date-csv to avoid leakage)'}")

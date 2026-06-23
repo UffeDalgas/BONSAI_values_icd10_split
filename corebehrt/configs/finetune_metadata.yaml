@@ -4,7 +4,7 @@ logging:
 
 paths:
   prepared_data: ./outputs/finetuning/processed_data_metadata/
-  pretrain_model: ./outputs/pretraining_dryrun     # <-- point at YOUR pretrained model
+  pretrain_model: ./outputs/pretrained_model     # <-- point at YOUR pretrained model
   tokenized: ./outputs/tokenized_metadata        # finetune vocab (for value-injection embedding grow)
   model: ./outputs/finetune_models/metadata
 

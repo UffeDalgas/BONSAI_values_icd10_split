@@ -18,4 +18,4 @@ outcome:
   n_hours_start_follow_up: 1
   n_hours_end_follow_up: null
 concept_pattern_hours_delay:
-  "^D": 72
+  "^D(?!OD)": 72   # diagnosis recording-lag grace, but NOT the DOD outcome code

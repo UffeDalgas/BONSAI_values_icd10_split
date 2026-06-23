@@ -89,4 +89,34 @@ for c in baseline metadata grimage_v2 systemsage deep_embeddings maple_predictio
 done
 ```
 
+## Fixed-horizon mortality (1–5 year)
+`n_hours_end_follow_up: null` = "ever died" → label depends on follow-up length (bias). Use a fixed
+horizon and drop subjects with insufficient follow-up:
+
+```bash
+python build_mortality_horizon.py \
+  --outcomes ./outputs/outcomes/MORTALITY.csv \
+  --index    ./outputs/exposures_drawdate.csv \
+  --admin-censor-date 2024-12-31 \        # registry/study end (preferred); or --meds for per-subject last event
+  --horizons 1,2,3,4,5 --out-dir ./outputs/horizons
+```
+It prints the label balance per horizon and writes `exclude_<H>y.csv`. For horizon H:
+- `select_cohort` (shared + held_out): `paths.exclude_pids: ./outputs/horizons/exclude_<H>y.csv`
+- prepare configs: `outcome.n_hours_end_follow_up:` the printed hours
+  (1y=8766, 2y=17532, 3y=26298, 4y=35064, 5y=43830)
+- use horizon-specific output dirs so runs don't clobber.
+
+Horizon is an experiment axis alongside condition (so you get a model per condition × horizon).
+CoxPH loss + time-to-event evaluation will replace the fixed-horizon binary setup later.
+
+## Leakage diagnostics
+After `prepare` (finetune or held-out), before trusting any AUC:
+```bash
+python check_leakage.py --prepared ./outputs/.../processed_data_<cond> --vocab ./outputs/tokenized_<cond>
+```
+Reports: (1) % sequences containing a death token in input (must be ~0), (2) sequence-length gap by
+class, (3) **the input tokens that most separate deaths vs survivors** (transparency). Pre-index
+terminal-care/ICU codes showing up in (3) is *expected legitimate signal* — only a token flagged
+`death-like?` there is a leak.
+
 `archive/` holds earlier-iteration helpers (superseded by this flow); kept for reference.

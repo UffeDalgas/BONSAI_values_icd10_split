@@ -20,36 +20,28 @@
 ###############################################################################
 set -euo pipefail
 
-NAME="${1:?usage: run_condition.sh <name> [--id-map map.csv] [--sample-date-csv dates.csv]}"
+NAME="${1:?usage: run_condition.sh <name> [--id-map map.csv] [--sample-date-csv dates.csv] [--dayfirst] [--skip-validate]}"
 shift || true
-INJECT_ARGS=""
+INJECT_ARGS=""; ID_MAP=""; DRAW_DATES=""; DAYFIRST=""; SKIP_VALIDATE=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --id-map)          INJECT_ARGS="$INJECT_ARGS --id-map $2"; shift 2;;
-    --sample-date-csv) INJECT_ARGS="$INJECT_ARGS --sample-date-csv $2"; shift 2;;
+    --id-map)          INJECT_ARGS="$INJECT_ARGS --id-map $2"; ID_MAP="$2"; shift 2;;
+    --sample-date-csv) INJECT_ARGS="$INJECT_ARGS --sample-date-csv $2"; DRAW_DATES="$2"; shift 2;;
+    --dayfirst)        INJECT_ARGS="$INJECT_ARGS --dayfirst"; DAYFIRST="--dayfirst"; shift;;
+    --skip-validate)   SKIP_VALIDATE=1; shift;;
     *) echo "unknown arg: $1"; exit 1;;
   esac
 done
 
-# ---- leakage guard: train/tuning/held_out must be subject-disjoint ----
-python - <<'PYGUARD'
-import glob, pandas as pd, sys
-splits = {}
-for sp in ["train","tuning","held_out"]:
-    fs = glob.glob(f"data/meds_for_bonsai/{sp}/*.parquet")
-    if not fs: continue
-    splits[sp] = set(pd.concat([pd.read_parquet(f, columns=["subject_id"]) for f in fs])["subject_id"])
-pairs = [("train","tuning"),("train","held_out"),("tuning","held_out")]
-bad = False
-for a,b in pairs:
-    if a in splits and b in splits:
-        ov = splits[a] & splits[b]
-        if ov:
-            print(f"  LEAKAGE: {len(ov)} subjects in BOTH {a} and {b} (e.g. {list(ov)[:3]})"); bad = True
-if bad:
-    print("  Aborting — make MEDS splits subject-disjoint before training."); sys.exit(1)
-print("  split-overlap check: train/tuning/held_out are subject-disjoint ✓")
-PYGUARD
+# ---- pre-flight input validation (MEDS columns, DOD, split-disjointness, condition/id/date overlap) ----
+if [ -z "$SKIP_VALIDATE" ]; then
+  echo ">>> validating inputs"
+  VAL_ARGS="--meds data/meds_for_bonsai --conditions ."
+  [ -n "$ID_MAP" ]     && VAL_ARGS="$VAL_ARGS --id-map $ID_MAP"
+  [ -n "$DRAW_DATES" ] && VAL_ARGS="$VAL_ARGS --draw-dates $DRAW_DATES"
+  [ -n "$DAYFIRST" ]   && VAL_ARGS="$VAL_ARGS $DAYFIRST"
+  python validate_inputs.py $VAL_ARGS || { echo "input validation failed — aborting (use --skip-validate to override)"; exit 1; }
+fi
 
 # name -> condition CSV
 declare -A CSV=(

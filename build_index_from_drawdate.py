@@ -29,12 +29,19 @@ def main():
     ap.add_argument("--date-col", default="blood_draw_date")
     ap.add_argument("--out", required=True)
     ap.add_argument("--id-map", default=None)
+    ap.add_argument("--dayfirst", action="store_true",
+                    help="Parse dates as day-first (DD-MM-YYYY / DD/MM/YYYY), e.g. 23-06-2026.")
     args = ap.parse_args()
 
     md = pd.read_csv(args.metadata)
+    parsed = pd.to_datetime(md[args.date_col], errors="coerce", dayfirst=args.dayfirst)
+    n_bad = parsed.isna().sum()
+    if n_bad:
+        print(f"  ⚠ {n_bad}/{len(parsed)} draw dates could not be parsed (dropped). "
+              f"Check format / try --dayfirst.")
     out = pd.DataFrame({
         "subject_id": md[args.id_col].astype(str),
-        "time": pd.to_datetime(md[args.date_col], errors="coerce"),
+        "time": parsed,
     }).dropna(subset=["time"])
 
     if args.id_map:

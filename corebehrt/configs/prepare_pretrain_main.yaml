@@ -1,0 +1,14 @@
+logging: {level: INFO, path: ./outputs/logs}
+paths:
+  features: ./outputs/features_baseline      # built by create_data_baseline.yaml
+  tokenized: ./outputs/tokenized_baseline
+  prepared_data: ./outputs/pretraining/processed_data/
+data:
+  type: "pretrain"
+  val_ratio: 0.2
+  truncation_len: 30
+  min_len: 2
+  predefined_splits: false
+  cutoff_date: {year: 2030, month: 1, day: 1}   # set to your data's horizon
+  split_data: true
+  mode: "train"                                  # pretrain on TRAIN split only (no held_out leakage)
